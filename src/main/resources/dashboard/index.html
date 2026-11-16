@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>signalScaner dashboard</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header><h1>signalScaner</h1>
+    <div id="feedStatus">loading…</div>
+</header>
+<main>
+    <section class="grid" id="summary"></section>
+    <section class="panel"><h2>M5 market</h2>
+        <canvas id="chart" width="1400" height="520"></canvas>
+    </section>
+    <section class="panel"><h2>Strategies</h2>
+        <div class="strategies" id="strategies"></div>
+    </section>
+    <section class="panel"><h2>MT5 positions</h2>
+        <div id="positions"></div>
+    </section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>
