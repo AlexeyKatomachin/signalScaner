@@ -124,7 +124,7 @@ public class Modern3LevelStrategy implements Strategy {
             if (order.isClosed()) {
                 telegramNotifier.sendFulfilledSignal(new Signal(order), currentLtfCandle.getTime());
                 orders.remove(i);
-                i = i-1;
+                i = i - 1;
             }
         }
     }
@@ -163,7 +163,7 @@ public class Modern3LevelStrategy implements Strategy {
                 } else if (order.getStopLoss() < currentLtfCandle.getHigh()) {
                     order.setFulfilledByStop(true);
                     order.setClosed(true);
-                }else if (order.getSetup().getFibonacciRangeMtf().getLow() > currentLtfCandle.getLow()) {
+                } else if (order.getSetup().getFibonacciRangeMtf().getLow() > currentLtfCandle.getLow()) {
                     order.setNeedPartialClose(true);
                     order.setNeedNotifyClients(true);
                 }

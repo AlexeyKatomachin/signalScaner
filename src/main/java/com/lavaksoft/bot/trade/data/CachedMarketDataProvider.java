@@ -50,6 +50,7 @@ public class CachedMarketDataProvider implements MarketDataProvider {
     private static class CachedData {
         final List<Candle> candles;
         final long timestamp;
+
         CachedData(List<Candle> candles, long timestamp) {
             this.candles = candles;
             this.timestamp = timestamp;

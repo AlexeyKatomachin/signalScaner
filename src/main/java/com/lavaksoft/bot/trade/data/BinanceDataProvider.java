@@ -4,7 +4,6 @@ import com.binance.connector.client.impl.SpotClientImpl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lavaksoft.bot.trade.model.Candle;
-import okhttp3.OkHttpClient;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;

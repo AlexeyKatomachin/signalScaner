@@ -9,5 +9,6 @@ public interface MarketDataProvider {
 
     // Новый метод: свечи за период от startTime до endTime (в миллисекундах)
     List<Candle> getKlines(String symbol, String interval, long startTime, long endTime);
+
     List<Candle> getKlinesClosed(String symbol, String interval, long startTime, long endTime);
 }

@@ -10,20 +10,25 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.anyLong;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 /**
  * Интеграционный тест: загружаем свечи из CSV, прогоняем бэктест,
@@ -61,7 +66,7 @@ public class BacktestWithSignalTest {
     }
 
     @Test
-    void testFractals () throws IOException {
+    void testFractals() throws IOException {
         FractalUtils fractalUtils = new FractalUtils();
 
         fractalUtils.findFractals(m15Candles);
@@ -112,7 +117,10 @@ public class BacktestWithSignalTest {
         List<String> lines = Files.readAllLines(Paths.get(path));
         boolean firstLine = true;
         for (String line : lines) {
-            if (firstLine) { firstLine = false; continue; }
+            if (firstLine) {
+                firstLine = false;
+                continue;
+            }
             if (line.isBlank()) continue;
             String[] parts = line.split(",");
             long time = Long.parseLong(parts[0].trim().replace("\"", ""));
@@ -162,11 +170,13 @@ public class BacktestWithSignalTest {
 
     private static class TestMarketDataProvider implements MarketDataProvider {
         private final Map<String, List<Candle>> storage = new HashMap<>();
+
         public TestMarketDataProvider(List<Candle> m15, List<Candle> h4, List<Candle> d1) {
             storage.put(IntervalType.m15.getName(), new ArrayList<>(m15));
             storage.put(IntervalType.H4.getName(), new ArrayList<>(h4));
             storage.put(IntervalType.D1.getName(), new ArrayList<>(d1));
         }
+
         @Override
         public List<Candle> getKlines(String symbol, String interval, int limit) {
             List<Candle> all = storage.get(interval);
@@ -174,12 +184,14 @@ public class BacktestWithSignalTest {
             if (limit <= 0 || limit >= all.size()) return new ArrayList<>(all);
             return new ArrayList<>(all.subList(all.size() - limit, all.size()));
         }
+
         @Override
         public List<Candle> getKlines(String symbol, String interval, long startTime, long endTime) {
             List<Candle> all = storage.get(interval);
             if (all == null) return Collections.emptyList();
             return all.stream().filter(c -> c.getTime() >= startTime && c.getTime() <= endTime).collect(Collectors.toList());
         }
+
         @Override
         public List<Candle> getKlinesClosed(String symbol, String interval, long startTime, long endTime) {
             List<Candle> klines = getKlines(symbol, interval, startTime, endTime);

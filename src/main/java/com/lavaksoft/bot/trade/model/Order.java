@@ -33,7 +33,7 @@ public class Order {
             partialClosePrice = fibonacciRangeMtf.getHigh();
         } else if (setup.getTypeMtf().equals(ActionType.SHORT)) {
             stopLoss = fibonacciRangeMtf.getHigh() + (fibonacciRangeMtf.getHigh() * 0.02);
-            RR = (enterPrice - takeProfit)/(stopLoss - enterPrice);
+            RR = (enterPrice - takeProfit) / (stopLoss - enterPrice);
             partialClosePrice = fibonacciRangeMtf.getLow();
         }
         type = setup.getTypeMtf();

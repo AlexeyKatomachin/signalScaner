@@ -28,7 +28,7 @@ public enum IntervalType {
         return type;
     }
 
-    public enum Type{
+    public enum Type {
         HTF,
         MTF,
         LTF
