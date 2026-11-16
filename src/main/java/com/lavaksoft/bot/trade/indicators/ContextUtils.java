@@ -30,7 +30,7 @@ public class ContextUtils {
                     prePrevious = previous;
                     previous = keyFractal;
                 }
-                if (keyFractal.getType().equals(KeyFractalType.HH) && previous.getType().equals(KeyFractalType.LL)) {
+                if (keyFractal.getType().equals(KeyFractalType.HH) && prePrevious.getType().equals(KeyFractalType.LL)) {
                     if (context.isEmpty()) {
                         List<Candle> contextCandles = new ArrayList<>(candles.subList(0, i));
                         context.add(new ContextFlow(contextCandles.stream()
@@ -45,7 +45,7 @@ public class ContextUtils {
                                 .map(x -> x.getFractal().getKeyFractal()).collect(Collectors.toList()), contextCandles, ActionType.SHORT));
                     }
                 }
-                if (keyFractal.getType().equals(KeyFractalType.LL) && previous.getType().equals(KeyFractalType.HH)) {
+                if (keyFractal.getType().equals(KeyFractalType.LL) && prePrevious.getType().equals(KeyFractalType.HH)) {
                     if (context.isEmpty()) {
                         List<Candle> contextCandles = new ArrayList<>(candles.subList(0, i));
                         context.add(new ContextFlow(contextCandles.stream()

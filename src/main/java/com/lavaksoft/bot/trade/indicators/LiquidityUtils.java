@@ -80,8 +80,8 @@ public class LiquidityUtils {
     private static void findEQL(List<Candle> candles, TreeMap<Double, Liquidity> highLiquidity, TreeMap<Double, Liquidity> lowLiquidity) {
         ArrayList<Double> lowLiquidityKeySet = new ArrayList<>(lowLiquidity.keySet());
         for (int i = 0; i < lowLiquidityKeySet.size() - 1; i++) {
-            Liquidity liquidityNext = highLiquidity.get(lowLiquidityKeySet.get(i + 1));
-            Liquidity liquidityCurrent = highLiquidity.get(lowLiquidityKeySet.get(i));
+            Liquidity liquidityNext = lowLiquidity.get(lowLiquidityKeySet.get(i + 1));
+            Liquidity liquidityCurrent = lowLiquidity.get(lowLiquidityKeySet.get(i));
             Candle candleNext = liquidityNext.getFractal().getCandle();
             Candle candleCurrent = liquidityCurrent.getFractal().getCandle();
             double percentOfChange = (100d * (candleNext.getLow() - candleCurrent.getLow())) / candleNext.getLow();
@@ -145,21 +145,17 @@ public class LiquidityUtils {
             if (currentFractal.isHigh()) {
                 SortedMap<Double, Liquidity> highToDelete = highLiquidity.subMap(0D, currentFractal.getCandle().getHigh());
                 if (!highToDelete.isEmpty()) {
-                    highToDelete.forEach((k, v) -> {
-                        v.setFulfilled(true);
-                        highLiquidity.remove(k, v);
-                    });
+                    highToDelete.values().forEach(v -> v.setFulfilled(true));
+                    highToDelete.clear();
                 }
                 highLiquidity.put(currentFractal.getCandle().getHigh(), new Liquidity(currentFractal, LiquidityType.BSL));
             }
             if (currentFractal.isLow()) {
                 if ((!lowLiquidity.isEmpty()) && (lowLiquidity.lastKey() < currentFractal.getCandle().getLow())) {
-                    SortedMap<Double, Liquidity> lowToDelete = lowLiquidity.subMap(currentFractal.getCandle().getLow(), lowLiquidity.lastKey());
+                    SortedMap<Double, Liquidity> lowToDelete = lowLiquidity.subMap(lowLiquidity.lastKey(), currentFractal.getCandle().getLow());
                     if (!lowToDelete.isEmpty()) {
-                        lowToDelete.forEach((k, v) -> {
-                            v.setFulfilled(true);
-                            lowLiquidity.remove(k, v);
-                        });
+                        lowToDelete.values().forEach(v -> v.setFulfilled(true));
+                        lowToDelete.clear();
                     }
                 }
                 lowLiquidity.put(currentFractal.getCandle().getLow(), new Liquidity(currentFractal, LiquidityType.SSL));
