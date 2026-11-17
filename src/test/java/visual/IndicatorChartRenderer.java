@@ -11,35 +11,41 @@ import com.lavaksoft.bot.trade.model.Fractal;
 import com.lavaksoft.bot.trade.model.KeyFractal;
 import com.lavaksoft.bot.trade.model.Liquidity;
 import com.lavaksoft.bot.trade.model.LiquiditySweep;
+import com.lavaksoft.bot.trade.model.LiquidityType;
 import com.lavaksoft.bot.trade.model.MarketBias;
 import com.lavaksoft.bot.trade.model.OrderBlock;
 import com.lavaksoft.bot.trade.model.OteZone;
 import com.lavaksoft.bot.trade.model.POI;
-import com.lavaksoft.bot.trade.model.SwingPoints;
+import com.lavaksoft.bot.trade.model.StructureBreak;
 
 import javax.imageio.ImageIO;
-import java.awt.*;
+import java.awt.BasicStroke;
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 final class IndicatorChartRenderer {
 
     private static final int WIDTH = 3200;
-    private static final int HEIGHT = 1200;
+    private static final int HEIGHT = 1300;
     private static final int LEFT = 90;
     private static final int RIGHT = 40;
-    private static final int TOP = 70;
+    private static final int TOP = 75;
     private static final int BOTTOM = 80;
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("MM-dd HH:mm");
 
     void renderBefore(List<Candle> candles, String title, Path output) throws IOException {
-        render(candles, title + " — BEFORE", output, canvas -> {
-        });
+        render(candles, title + " — BEFORE", output, canvas -> { });
     }
 
     void renderFractals(List<Candle> candles, Path output) throws IOException {
@@ -47,20 +53,28 @@ final class IndicatorChartRenderer {
             for (int i = 0; i < candles.size(); i++) {
                 Fractal fractal = candles.get(i).getFractal();
                 if (fractal == null) continue;
-                if (fractal.isHigh()) canvas.marker(i, candles.get(i).getHigh(), "FH", new Color(255, 210, 70));
-                if (fractal.isLow()) canvas.marker(i, candles.get(i).getLow(), "FL", new Color(80, 220, 255));
+                if (fractal.isHigh()) canvas.marker(i, candles.get(i).getHigh(), "FH", new Color(255, 205, 70));
+                if (fractal.isLow()) canvas.marker(i, candles.get(i).getLow(), "FL", new Color(70, 205, 255));
             }
         });
     }
 
-    void renderKeyFractals(List<Candle> candles, Path output) throws IOException {
-        render(candles, "Key fractals — AFTER", output, canvas -> {
-            for (int i = 0; i < candles.size(); i++) {
-                Fractal fractal = candles.get(i).getFractal();
-                if (fractal == null || fractal.getKeyFractal() == null) continue;
-                KeyFractal key = fractal.getKeyFractal();
-                double price = fractal.isHigh() ? candles.get(i).getHigh() : candles.get(i).getLow();
-                canvas.marker(i, price, key.getType().name(), new Color(255, 165, 0));
+    void renderKeyFractals(List<Candle> candles, List<KeyFractal> keys, Path output) throws IOException {
+        render(candles, "Key fractals / HH-HL-LH-LL — AFTER", output, canvas -> {
+            List<KeyFractal> visible = new ArrayList<>(keys);
+            visible.sort(Comparator.comparing(k -> k.getFractal().getCandle().getDateTime()));
+            KeyFractal previous = null;
+            for (KeyFractal key : visible) {
+                int index = candles.indexOf(key.getFractal().getCandle());
+                if (index < 0) continue;
+                double price = pivotPrice(key);
+                Color color = key.getFractal().isHigh() ? new Color(255, 180, 65) : new Color(80, 205, 255);
+                if (previous != null) {
+                    int previousIndex = candles.indexOf(previous.getFractal().getCandle());
+                    if (previousIndex >= 0) canvas.segment(previousIndex, pivotPrice(previous), index, price, new Color(150, 155, 175), 1.4f);
+                }
+                canvas.marker(index, price, key.getType().name(), color);
+                previous = key;
             }
         });
     }
@@ -70,42 +84,74 @@ final class IndicatorChartRenderer {
     }
 
     void renderContexts(List<Candle> candles, List<ContextFlow> contexts, Path output) throws IOException {
-        render(candles, "Context flows — AFTER", output, canvas -> {
-            for (int i = 0; i < contexts.size(); i++) {
-                ContextFlow context = contexts.get(i);
-                if (context.getCandles().isEmpty()) continue;
-                int from = candles.indexOf(context.getCandles().get(0));
-                int to = candles.indexOf(context.getCandles().get(context.getCandles().size() - 1));
-                if (from < 0 || to < 0) continue;
-                Color color = context.getType() == ActionType.LONG
-                        ? new Color(45, 170, 105, 32)
-                        : new Color(210, 70, 80, 32);
-                canvas.verticalBand(from, to, color, "CTX " + (i + 1) + " " + context.getType() + (context.isHasBOS() ? " BOS" : ""));
+        render(candles, "Context from HH/HL and LH/LL — AFTER", output, canvas -> {
+            for (ContextFlow context : contexts) {
+                List<KeyFractal> keys = context.getKeyFractals();
+                Color contextColor = context.getType() == ActionType.LONG
+                        ? new Color(55, 215, 125) : new Color(245, 95, 105);
+                for (int i = 0; i < keys.size(); i++) {
+                    KeyFractal key = keys.get(i);
+                    int index = candles.indexOf(key.getFractal().getCandle());
+                    if (index < 0) continue;
+                    double price = pivotPrice(key);
+                    canvas.marker(index, price, key.getType().name(), contextColor);
+                    if (i > 0) {
+                        KeyFractal previous = keys.get(i - 1);
+                        int previousIndex = candles.indexOf(previous.getFractal().getCandle());
+                        if (previousIndex >= 0) canvas.segment(previousIndex, pivotPrice(previous), index, price, contextColor, 2.0f);
+                    }
+                }
+                if (!keys.isEmpty()) {
+                    int first = candles.indexOf(keys.get(0).getFractal().getCandle());
+                    canvas.labelAtIndex(first, "CTX " + context.getType(), contextColor);
+                }
             }
         });
     }
 
     void renderLiquidity(List<Candle> candles, List<Liquidity> liquidities, Path output) throws IOException {
-        render(candles, "Liquidity — AFTER", output, canvas -> {
+        render(candles, "Liquidity / EQH-EQL — AFTER", output, canvas -> {
+            List<Liquidity> equal = new ArrayList<>();
+            List<Liquidity> active = new ArrayList<>();
             for (Liquidity liquidity : liquidities) {
+                if (liquidity.getType() == LiquidityType.EQH || liquidity.getType() == LiquidityType.EQL) equal.add(liquidity);
+                else if (!liquidity.isFulfilled()) active.add(liquidity);
+            }
+            equal.sort(Comparator.comparing(l -> l.getFractal().getCandle().getDateTime()));
+            int equalFrom = Math.max(0, equal.size() - 14);
+            for (int i = equalFrom; i < equal.size(); i++) {
+                Liquidity liquidity = equal.get(i);
                 Candle source = liquidity.getFractal().getCandle();
-                int from = candles.indexOf(source);
-                if (from < 0) continue;
+                int index = candles.indexOf(source);
+                if (index < 0) continue;
+                double price = liquidity.getType() == LiquidityType.EQH ? source.getHigh() : source.getLow();
+                Color color = liquidity.getType() == LiquidityType.EQH ? new Color(255, 190, 70) : new Color(70, 205, 255);
+                canvas.marker(index, price, liquidity.getType().name(), color);
+                canvas.horizontal(index, Math.min(candles.size() - 1, index + 28), price, color, liquidity.getType().name());
+            }
+
+            active.sort(Comparator.comparing(l -> l.getFractal().getCandle().getDateTime()));
+            int activeFrom = Math.max(0, active.size() - 6);
+            for (int i = activeFrom; i < active.size(); i++) {
+                Liquidity liquidity = active.get(i);
+                Candle source = liquidity.getFractal().getCandle();
+                int index = candles.indexOf(source);
+                if (index < 0) continue;
                 double price = liquidity.getFractal().isHigh() ? source.getHigh() : source.getLow();
-                Color color = liquidity.getFractal().isHigh() ? new Color(255, 190, 80) : new Color(80, 210, 255);
-                canvas.horizontal(from, candles.size() - 1, price, color,
-                        liquidity.getType().name() + (liquidity.isFulfilled() ? " X" : ""));
+                Color color = liquidity.getFractal().isHigh() ? new Color(230, 165, 65) : new Color(75, 175, 235);
+                canvas.horizontal(index, Math.min(candles.size() - 1, index + 18), price, color, liquidity.getType().name());
             }
         });
     }
 
     void renderPoi(List<Candle> candles, List<POI> pois, Path output) throws IOException {
         render(candles, "Points of interest — AFTER", output, canvas -> {
-            for (POI poi : pois) {
+            int from = Math.max(0, pois.size() - 16);
+            for (int p = from; p < pois.size(); p++) {
+                POI poi = pois.get(p);
                 int index = -1;
                 if (poi.getFvg() != null) index = candles.indexOf(poi.getFvg().getCandle());
-                else if (poi.getLiquidity() != null)
-                    index = candles.indexOf(poi.getLiquidity().getFractal().getCandle());
+                else if (poi.getLiquidity() != null) index = candles.indexOf(poi.getLiquidity().getFractal().getCandle());
                 if (index < 0) continue;
                 Color color = poi.getType() == ActionType.LONG ? new Color(50, 220, 120) : new Color(255, 100, 100);
                 canvas.marker(index, poi.getValue(), "POI " + poi.getType(), color);
@@ -113,87 +159,123 @@ final class IndicatorChartRenderer {
         });
     }
 
-    void renderBos(List<Candle> candles, List<KeyFractal> keyFractals, Path output) throws IOException {
-        render(candles, "BOS flags — AFTER", output, canvas -> {
-            for (KeyFractal key : keyFractals) {
-                if (!key.isHasBos()) continue;
-                Candle source = key.getFractal().getCandle();
-                int from = candles.indexOf(source);
-                if (from < 0) continue;
-                double price = key.getFractal().isHigh() ? source.getHigh() : source.getLow();
-                canvas.horizontal(from, candles.size() - 1, price, new Color(255, 80, 220), "BOS " + key.getType());
+    void renderBos(List<Candle> candles, List<StructureBreak> breaks, Path output) throws IOException {
+        render(candles, "BOS / CHoCH structure breaks — AFTER", output, canvas -> {
+            int from = Math.max(0, breaks.size() - 14);
+            for (int i = from; i < breaks.size(); i++) {
+                StructureBreak b = breaks.get(i);
+                Color color = b.getType().name().equals("CHOCH") ? new Color(205, 105, 255)
+                        : b.getDirection() == ActionType.LONG ? new Color(70, 220, 130) : new Color(255, 95, 105);
+                canvas.horizontal(b.getReferenceIndex(), b.getBreakIndex(), b.getLevel(), color,
+                        b.getType() + " " + b.getDirection());
+                canvas.marker(b.getBreakIndex(), candles.get(b.getBreakIndex()).getClose(), b.getType().name(), color);
+                canvas.marker(b.getReferenceIndex(), b.getLevel(), "PIVOT", color);
             }
         });
     }
 
-    void renderMarketStructure(List<Candle> candles, SwingPoints points, MarketBias bias, Path output) throws IOException {
+    void renderMarketStructure(List<Candle> candles, List<KeyFractal> keys, MarketBias bias, Path output) throws IOException {
         render(candles, "Market structure / bias=" + bias + " — AFTER", output, canvas -> {
-            for (Integer index : points.getHighs())
-                canvas.marker(index, candles.get(index).getHigh(), "SH", new Color(255, 196, 80));
-            for (Integer index : points.getLows())
-                canvas.marker(index, candles.get(index).getLow(), "SL", new Color(85, 205, 255));
+            KeyFractal previous = null;
+            for (KeyFractal key : keys) {
+                int index = candles.indexOf(key.getFractal().getCandle());
+                if (index < 0) continue;
+                double price = pivotPrice(key);
+                Color color = key.getFractal().isHigh() ? new Color(255, 190, 75) : new Color(70, 205, 255);
+                if (previous != null) {
+                    int pIndex = candles.indexOf(previous.getFractal().getCandle());
+                    if (pIndex >= 0) canvas.segment(pIndex, pivotPrice(previous), index, price, new Color(160, 165, 185), 1.7f);
+                }
+                canvas.marker(index, price, key.getType().name(), color);
+                previous = key;
+            }
             canvas.topLabel("BIAS: " + bias, new Color(220, 230, 245));
         });
     }
 
-    void renderSweepChoch(List<Candle> candles, LiquiditySweep sweep, Choch choch, Path output) throws IOException {
-        render(candles, "Liquidity sweep + CHoCH — AFTER", output, canvas -> {
-            if (sweep != null) {
-                canvas.horizontal(sweep.getSweptIndex(), sweep.getSweepIndex(), sweep.getLevel(), new Color(255, 190, 70), "swept liquidity");
-                canvas.marker(sweep.getSweepIndex(), sweep.getExtreme(), "SWEEP", new Color(255, 110, 80));
+    void renderSweepChoch(List<Candle> candles, List<LiquiditySweep> sweeps, List<Choch> chochs, Path output) throws IOException {
+        render(candles, "Main structure liquidity sweeps + CHoCH — AFTER", output, canvas -> {
+            for (LiquiditySweep sweep : sweeps) {
+                boolean lowSweep = sweep.getExtreme() < sweep.getLevel();
+                Color color = lowSweep ? new Color(80, 215, 145) : new Color(255, 160, 70);
+                canvas.horizontal(sweep.getSweptIndex(), sweep.getSweepIndex(), sweep.getLevel(), color, lowSweep ? "SSL SWEEP" : "BSL SWEEP");
+                canvas.marker(sweep.getSweepIndex(), sweep.getExtreme(), "SWEEP", color);
             }
-            if (choch != null) {
-                canvas.horizontal(choch.getReferenceIndex(), choch.getChochIndex(), choch.getLevel(), new Color(190, 100, 255), "CHoCH level");
-                canvas.marker(choch.getChochIndex(), candles.get(choch.getChochIndex()).getClose(), "CHoCH", new Color(220, 130, 255));
-            }
-        });
-    }
-
-    void renderOte(List<Candle> candles, OrderBlock orderBlock, FVG fvg, OteZone ote, Path output) throws IOException {
-        render(candles, "Order Block + FVG + OTE — AFTER", output, canvas -> {
-            if (orderBlock != null) {
-                canvas.zone(orderBlock.getOrderBlockIndex(), candles.size() - 1,
-                        orderBlock.getBottom(), orderBlock.getTop(), new Color(255, 185, 70, 55), "OB " + orderBlock.getType());
-                canvas.marker(orderBlock.getBosIndex(), candles.get(orderBlock.getBosIndex()).getClose(), "BOS", new Color(255, 210, 100));
-            }
-            if (fvg != null) drawFvgs(canvas, candles, java.util.Collections.singletonList(fvg));
-            if (ote != null) {
-                int from = orderBlock == null ? 0 : orderBlock.getBosIndex();
-                canvas.zone(from, candles.size() - 1, ote.getBottom(), ote.getTop(), new Color(120, 100, 255, 50), "OTE 0.618-0.786");
-                canvas.horizontal(from, candles.size() - 1, ote.getMid(), new Color(170, 150, 255), "OTE MID");
+            for (Choch choch : chochs) {
+                if (choch == null) continue;
+                Color color = new Color(205, 105, 255);
+                canvas.horizontal(choch.getReferenceIndex(), choch.getChochIndex(), choch.getLevel(), color, "CHoCH");
+                canvas.marker(choch.getChochIndex(), candles.get(choch.getChochIndex()).getClose(), "CHoCH", color);
             }
         });
     }
 
-    void renderBpr(List<Candle> candles, List<FVG> fvgs, List<BprZone> zones, Path output) throws IOException {
+    void renderOte(List<Candle> candles, List<OrderBlock> blocks, List<FVG> fvgs, List<OteZone> zones, Path output) throws IOException {
+        render(candles, "Order Block + FVG + OTE (multiple setups) — AFTER", output, canvas -> {
+            for (int i = 0; i < blocks.size(); i++) {
+                OrderBlock ob = blocks.get(i);
+                OteZone ote = zones.get(i);
+                int to = Math.min(candles.size() - 1, ob.getBosIndex() + 24);
+                canvas.zone(ob.getOrderBlockIndex(), to, ob.getBottom(), ob.getTop(), new Color(255, 185, 70, 45), "OB #" + (i + 1));
+                canvas.zone(ob.getBosIndex(), to, ote.getBottom(), ote.getTop(), new Color(120, 100, 255, 42), "OTE #" + (i + 1));
+                canvas.horizontal(ob.getBosIndex(), to, ote.getMid(), new Color(170, 150, 255), "OTE MID");
+                canvas.marker(ob.getLevelIndex(), ob.getType() == ActionType.LONG ? candles.get(ob.getLevelIndex()).getHigh() : candles.get(ob.getLevelIndex()).getLow(), "STRUCT", new Color(255, 210, 100));
+                if (ob.getLegLowIndex() >= 0) canvas.marker(ob.getLegLowIndex(), ob.getLegLow(), "LEG LOW", new Color(70, 205, 255));
+                if (ob.getLegHighIndex() >= 0) canvas.marker(ob.getLegHighIndex(), ob.getLegHigh(), "LEG HIGH", new Color(255, 190, 75));
+                canvas.marker(ob.getBosIndex(), candles.get(ob.getBosIndex()).getClose(), "BREAK", new Color(255, 210, 100));
+                if (i < fvgs.size() && fvgs.get(i) != null) drawFvgs(canvas, candles, java.util.Collections.singletonList(fvgs.get(i)));
+            }
+        });
+    }
+
+    void renderBpr(List<Candle> candles, List<BprZone> zones, Path output) throws IOException {
         render(candles, "Balanced Price Ranges — AFTER", output, canvas -> {
-            drawFvgs(canvas, candles, fvgs);
-            for (BprZone zone : zones) {
-                canvas.zone(zone.getFormedIndex(), candles.size() - 1, zone.getBottom(), zone.getTop(),
-                        new Color(255, 90, 215, 55), "BPR");
+            for (int i = 0; i < zones.size(); i++) {
+                BprZone zone = zones.get(i);
+                int firstIndex = candles.indexOf(zone.getFirstFvg().getCandle());
+                int secondIndex = candles.indexOf(zone.getSecondFvg().getCandle());
+                int to = Math.min(candles.size() - 1, zone.getFormedIndex() + 22);
+                drawSingleFvg(canvas, candles, zone.getFirstFvg(), Math.min(to, Math.max(zone.getFormedIndex(), firstIndex + 10)), "FVG A");
+                drawSingleFvg(canvas, candles, zone.getSecondFvg(), Math.min(to, Math.max(zone.getFormedIndex(), secondIndex + 10)), "FVG B");
+                canvas.zone(zone.getFormedIndex(), to, zone.getBottom(), zone.getTop(), new Color(255, 90, 215, 65), "BPR #" + (i + 1));
             }
         });
     }
 
-    void renderBreaker(List<Candle> candles, BreakerBlock breaker, Path output) throws IOException {
-        render(candles, "Breaker block — AFTER", output, canvas -> {
-            if (breaker == null) return;
-            canvas.zone(breaker.getOriginOrderBlockIndex(), candles.size() - 1,
-                    breaker.getBottom(), breaker.getTop(), new Color(70, 185, 255, 55), "BREAKER");
-            canvas.marker(breaker.getInvalidationIndex(), candles.get(breaker.getInvalidationIndex()).getClose(),
-                    "INVALIDATED OB", new Color(70, 200, 255));
+    void renderBreaker(List<Candle> candles, List<BreakerBlock> breakers, Path output) throws IOException {
+        render(candles, "Breaker blocks — AFTER", output, canvas -> {
+            for (int i = 0; i < breakers.size(); i++) {
+                BreakerBlock breaker = breakers.get(i);
+                int to = Math.min(candles.size() - 1, breaker.getInvalidationIndex() + 24);
+                canvas.zone(breaker.getOriginOrderBlockIndex(), to, breaker.getBottom(), breaker.getTop(), new Color(70, 185, 255, 52), "BREAKER #" + (i + 1));
+                canvas.marker(breaker.getOriginOrderBlockIndex(), (breaker.getTop() + breaker.getBottom()) / 2.0, "ORIGIN OB", new Color(70, 200, 255));
+                canvas.marker(breaker.getInvalidationIndex(), candles.get(breaker.getInvalidationIndex()).getClose(), "INVALIDATED", new Color(70, 220, 255));
+            }
         });
+    }
+
+    private static double pivotPrice(KeyFractal key) {
+        Candle candle = key.getFractal().getCandle();
+        return key.getFractal().isHigh() ? candle.getHigh() : candle.getLow();
     }
 
     private static void drawFvgs(Canvas canvas, List<Candle> candles, List<FVG> fvgs) {
-        for (FVG fvg : fvgs) {
+        int fromList = Math.max(0, fvgs.size() - 10);
+        for (int i = fromList; i < fvgs.size(); i++) {
+            FVG fvg = fvgs.get(i);
             int from = candles.indexOf(fvg.getCandle());
             if (from < 0) continue;
-            int to = fvg.getCandleFulfilled() == null ? candles.size() - 1 : Math.max(from, candles.indexOf(fvg.getCandleFulfilled()));
-            Color color = fvg.getType() == ActionType.LONG ? new Color(50, 205, 120, 55) : new Color(255, 90, 90, 55);
-            canvas.zone(from, to, fvg.getLow(), fvg.getHigh(), color,
-                    "FVG " + fvg.getType() + (fvg.isFulfilled() ? " fulfilled" : " active"));
+            int fulfilled = fvg.getCandleFulfilled() == null ? -1 : candles.indexOf(fvg.getCandleFulfilled());
+            int to = fulfilled >= from ? fulfilled : Math.min(candles.size() - 1, from + 24);
+            drawSingleFvg(canvas, candles, fvg, to, "FVG " + fvg.getType());
         }
+    }
+
+    private static void drawSingleFvg(Canvas canvas, List<Candle> candles, FVG fvg, int to, String label) {
+        int from = candles.indexOf(fvg.getCandle());
+        if (from < 0) return;
+        Color color = fvg.getType() == ActionType.LONG ? new Color(50, 205, 120, 50) : new Color(255, 90, 90, 50);
+        canvas.zone(from, Math.max(from + 1, to), fvg.getLow(), fvg.getHigh(), color, label);
     }
 
     private void render(List<Candle> candles, String title, Path output, Overlay overlay) throws IOException {
@@ -216,9 +298,7 @@ final class IndicatorChartRenderer {
     }
 
     @FunctionalInterface
-    private interface Overlay {
-        void draw(Canvas canvas);
-    }
+    private interface Overlay { void draw(Canvas canvas); }
 
     private static final class Canvas {
         private final Graphics2D g;
@@ -238,7 +318,7 @@ final class IndicatorChartRenderer {
                 min = Math.min(min, candle.getLow());
                 max = Math.max(max, candle.getHigh());
             }
-            double padding = Math.max((max - min) * 0.03, 0.0000001);
+            double padding = Math.max((max - min) * 0.04, 0.0000001);
             this.minPrice = min - padding;
             this.maxPrice = max + padding;
             this.step = plotWidth / Math.max(1, candles.size() - 1);
@@ -270,7 +350,7 @@ final class IndicatorChartRenderer {
         }
 
         private void drawCandles() {
-            int bodyWidth = Math.max(2, Math.min(10, (int) Math.round(step * 0.65)));
+            int bodyWidth = Math.max(3, Math.min(14, (int) Math.round(step * 0.68)));
             for (int i = 0; i < candles.size(); i++) {
                 Candle candle = candles.get(i);
                 int x = x(i);
@@ -298,15 +378,28 @@ final class IndicatorChartRenderer {
             g.drawString(text, x + 5, textY);
         }
 
+        private void labelAtIndex(int index, String text, Color color) {
+            if (index < 0 || index >= candles.size()) return;
+            g.setColor(color);
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+            g.drawString(text, x(index) + 4, TOP + 18);
+        }
+
         private void horizontal(int fromIndex, int toIndex, double price, Color color, String label) {
             fromIndex = clampIndex(fromIndex);
             toIndex = clampIndex(toIndex);
             int y = y(price);
             g.setColor(color);
-            g.setStroke(new BasicStroke(1.5f));
+            g.setStroke(new BasicStroke(1.6f));
             g.drawLine(x(fromIndex), y, x(toIndex), y);
             g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
             g.drawString(label, x(fromIndex) + 4, y - 4);
+        }
+
+        private void segment(int fromIndex, double fromPrice, int toIndex, double toPrice, Color color, float width) {
+            g.setColor(color);
+            g.setStroke(new BasicStroke(width));
+            g.drawLine(x(clampIndex(fromIndex)), y(fromPrice), x(clampIndex(toIndex)), y(toPrice));
         }
 
         private void zone(int fromIndex, int toIndex, double low, double high, Color color, String label) {
@@ -328,32 +421,14 @@ final class IndicatorChartRenderer {
             g.drawString(label, left + 3, Math.max(TOP + 12, top - 3));
         }
 
-        private void verticalBand(int fromIndex, int toIndex, Color color, String label) {
-            fromIndex = clampIndex(fromIndex);
-            toIndex = clampIndex(toIndex);
-            int left = Math.min(x(fromIndex), x(toIndex));
-            int right = Math.max(x(fromIndex), x(toIndex));
-            g.setColor(color);
-            g.fillRect(left, TOP, Math.max(3, right - left), (int) plotHeight);
-            g.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 220));
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 10));
-            g.drawString(label, left + 5, TOP + 16);
-        }
-
         private void topLabel(String text, Color color) {
             g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
             g.setColor(color);
             g.drawString(text, WIDTH - RIGHT - 220, 35);
         }
 
-        private int clampIndex(int index) {
-            return Math.max(0, Math.min(candles.size() - 1, index));
-        }
-
-        private int x(int index) {
-            return LEFT + (int) Math.round(index * step);
-        }
-
+        private int clampIndex(int index) { return Math.max(0, Math.min(candles.size() - 1, index)); }
+        private int x(int index) { return LEFT + (int) Math.round(index * step); }
         private int y(double price) {
             double normalized = (price - minPrice) / (maxPrice - minPrice);
             return TOP + (int) Math.round((1.0 - normalized) * plotHeight);

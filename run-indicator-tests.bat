@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-call mvn -Dtest=visual.IndicatorVisualTest,reference.ReferenceIndicatorLogicTest,reference.IndicatorTimingTest test
+call mvn -Dtest=visual.IndicatorVisualTest,reference.ReferenceIndicatorLogicTest,reference.StructureIndicatorLogicTest,reference.IndicatorTimingTest test
 if errorlevel 1 (
     echo.
     echo Indicator validation FAILED. Check the Maven output above.

@@ -7,13 +7,14 @@ import com.lavaksoft.bot.trade.model.FvgConfluence;
 import com.lavaksoft.bot.trade.model.MarketBias;
 import com.lavaksoft.bot.trade.model.OrderBlock;
 import com.lavaksoft.bot.trade.model.OteZone;
-import com.lavaksoft.bot.trade.model.SwingPoints;
+import com.lavaksoft.bot.trade.model.StructureBreak;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
-/**
- * Order Block + FVG + OTE logic ported from strategy_ote.py.
- */
+/** Order Block + FVG + OTE calculations. */
 public class OTEUtils {
     public static final double OTE_FIB_LOW = 0.618;
     public static final double OTE_FIB_HIGH = 0.786;
@@ -31,61 +32,47 @@ public class OTEUtils {
     }
 
     public OrderBlock detectOrderBlock(List<Candle> candles, MarketBias bias) {
-        return detectOrderBlock(candles, bias, 150, 2, 2);
+        List<OrderBlock> blocks = detectOrderBlocks(candles, bias, 150, 2, 2, 1);
+        return blocks.isEmpty() ? null : blocks.get(blocks.size() - 1);
     }
 
     public OrderBlock detectOrderBlock(List<Candle> candles, MarketBias bias, int lookback, int left, int right) {
-        SwingPoints points = marketStructureUtils.findSwingPoints(candles, left, right);
-        int n = candles.size();
-        int recentStart = Math.max(0, n - lookback);
+        List<OrderBlock> blocks = detectOrderBlocks(candles, bias, lookback, left, right, 1);
+        return blocks.isEmpty() ? null : blocks.get(blocks.size() - 1);
+    }
 
-        if (bias == MarketBias.BULLISH) {
-            for (int p = points.getHighs().size() - 1; p >= 0; p--) {
-                int levelIndex = points.getHighs().get(p);
-                if (levelIndex < recentStart) continue;
-                double level = candles.get(levelIndex).getHigh();
-                for (int bosIndex = levelIndex + 1; bosIndex < n; bosIndex++) {
-                    if (candles.get(bosIndex).getClose() <= level) continue;
-                    Integer obIndex = null;
-                    for (int i = bosIndex; i > levelIndex; i--) {
-                        if (candles.get(i).getClose() < candles.get(i).getOpen()) {
-                            obIndex = i;
-                            break;
-                        }
-                    }
-                    if (obIndex == null) continue;
-                    double legLow = minLow(candles, obIndex, bosIndex);
-                    double legHigh = maxHigh(candles, obIndex, n - 1);
-                    return new OrderBlock(ActionType.LONG, obIndex, bosIndex, levelIndex,
-                            candles.get(obIndex).getHigh(), candles.get(obIndex).getLow(), legLow, legHigh);
-                }
-            }
-            return null;
+    /**
+     * Returns several historical OB impulses for visual validation instead of hiding everything
+     * behind a single latest setup. The impulse leg ends at the break candle; no future candle is
+     * allowed to change its OTE range.
+     */
+    public List<OrderBlock> detectOrderBlocks(List<Candle> candles, MarketBias bias, int lookback,
+                                               int left, int right, int maxResults) {
+        List<OrderBlock> result = new ArrayList<>();
+        if (bias == MarketBias.NEUTRAL || candles == null || candles.isEmpty()) return result;
+
+        ActionType requiredDirection = bias == MarketBias.BULLISH ? ActionType.LONG : ActionType.SHORT;
+        int recentStart = Math.max(0, candles.size() - lookback);
+        Set<Integer> usedObIndexes = new HashSet<>();
+
+        for (StructureBreak structureBreak : marketStructureUtils.findStructureBreaks(candles, left, right)) {
+            if (structureBreak.getDirection() != requiredDirection) continue;
+            if (structureBreak.getReferenceIndex() < recentStart) continue;
+
+            int obIndex = findLastOppositeCandle(candles, structureBreak.getReferenceIndex(),
+                    structureBreak.getBreakIndex(), requiredDirection);
+            if (obIndex < 0 || !usedObIndexes.add(obIndex)) continue;
+
+            Extremum low = minLow(candles, obIndex, structureBreak.getBreakIndex());
+            Extremum high = maxHigh(candles, obIndex, structureBreak.getBreakIndex());
+            Candle ob = candles.get(obIndex);
+            result.add(new OrderBlock(requiredDirection, obIndex, structureBreak.getBreakIndex(),
+                    structureBreak.getReferenceIndex(), ob.getHigh(), ob.getLow(),
+                    low.value, high.value, low.index, high.index));
         }
 
-        if (bias == MarketBias.BEARISH) {
-            for (int p = points.getLows().size() - 1; p >= 0; p--) {
-                int levelIndex = points.getLows().get(p);
-                if (levelIndex < recentStart) continue;
-                double level = candles.get(levelIndex).getLow();
-                for (int bosIndex = levelIndex + 1; bosIndex < n; bosIndex++) {
-                    if (candles.get(bosIndex).getClose() >= level) continue;
-                    Integer obIndex = null;
-                    for (int i = bosIndex; i > levelIndex; i--) {
-                        if (candles.get(i).getClose() > candles.get(i).getOpen()) {
-                            obIndex = i;
-                            break;
-                        }
-                    }
-                    if (obIndex == null) continue;
-                    double legHigh = maxHigh(candles, obIndex, bosIndex);
-                    double legLow = minLow(candles, obIndex, n - 1);
-                    return new OrderBlock(ActionType.SHORT, obIndex, bosIndex, levelIndex,
-                            candles.get(obIndex).getHigh(), candles.get(obIndex).getLow(), legLow, legHigh);
-                }
-            }
-        }
-        return null;
+        if (result.size() <= maxResults) return result;
+        return new ArrayList<>(result.subList(result.size() - maxResults, result.size()));
     }
 
     public OteZone computeOteZone(OrderBlock orderBlock) {
@@ -107,8 +94,7 @@ public class OTEUtils {
     public FvgConfluence findConfluentFvg(List<Candle> candles, OrderBlock orderBlock, int maxGapBars) {
         List<FVG> fvgs = fvgUtils.findReferenceFVG(candles, orderBlock.getOrderBlockIndex());
         ActionType required = orderBlock.getType();
-        double referenceSize = orderBlock.getTop() - orderBlock.getBottom();
-        if (referenceSize == 0) referenceSize = 1.0;
+        double referenceSize = Math.max(1e-9, orderBlock.getTop() - orderBlock.getBottom());
 
         FvgConfluence best = null;
         for (FVG fvg : fvgs) {
@@ -122,9 +108,7 @@ public class OTEUtils {
             }
             double distance = Math.min(Math.abs(fvg.getLow() - orderBlock.getTop()),
                     Math.abs(orderBlock.getBottom() - fvg.getHigh()));
-            if (distance / referenceSize <= 0.5 && best == null) {
-                best = new FvgConfluence(fvg, false);
-            }
+            if (distance / referenceSize <= 0.5 && best == null) best = new FvgConfluence(fvg, false);
         }
         return best;
     }
@@ -137,15 +121,48 @@ public class OTEUtils {
         return Math.min(Math.max(price, bottom), top);
     }
 
-    private static double minLow(List<Candle> candles, int from, int toInclusive) {
-        double min = Double.POSITIVE_INFINITY;
-        for (int i = from; i <= toInclusive; i++) min = Math.min(min, candles.get(i).getLow());
-        return min;
+    private static int findLastOppositeCandle(List<Candle> candles, int referenceIndex, int breakIndex, ActionType direction) {
+        for (int i = breakIndex - 1; i > referenceIndex; i--) {
+            Candle candle = candles.get(i);
+            boolean opposite = direction == ActionType.LONG
+                    ? candle.getClose() < candle.getOpen()
+                    : candle.getClose() > candle.getOpen();
+            if (opposite) return i;
+        }
+        return -1;
     }
 
-    private static double maxHigh(List<Candle> candles, int from, int toInclusive) {
-        double max = Double.NEGATIVE_INFINITY;
-        for (int i = from; i <= toInclusive; i++) max = Math.max(max, candles.get(i).getHigh());
-        return max;
+    private static Extremum minLow(List<Candle> candles, int from, int toInclusive) {
+        double value = Double.POSITIVE_INFINITY;
+        int index = from;
+        for (int i = from; i <= toInclusive; i++) {
+            if (candles.get(i).getLow() < value) {
+                value = candles.get(i).getLow();
+                index = i;
+            }
+        }
+        return new Extremum(value, index);
+    }
+
+    private static Extremum maxHigh(List<Candle> candles, int from, int toInclusive) {
+        double value = Double.NEGATIVE_INFINITY;
+        int index = from;
+        for (int i = from; i <= toInclusive; i++) {
+            if (candles.get(i).getHigh() > value) {
+                value = candles.get(i).getHigh();
+                index = i;
+            }
+        }
+        return new Extremum(value, index);
+    }
+
+    private static final class Extremum {
+        private final double value;
+        private final int index;
+
+        private Extremum(double value, int index) {
+            this.value = value;
+            this.index = index;
+        }
     }
 }

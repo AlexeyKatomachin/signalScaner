@@ -1,0 +1,23 @@
+Updated indicator/visual-validation files
+
+Main logic:
+- FractalUtils: deterministic basic fractals; structural key-fractals HH/HL/LH/LL.
+- MarketStructureUtils: confirmed pivots + real BOS/CHoCH events.
+- BOSUtils: close-based breaks and historical structure-break API.
+- ContextUtils: HH+HL => LONG, LH+LL => SHORT.
+- LiquidityUtils: ATR-relative EQH/EQL tolerance.
+- OTEUtils: multiple historical OB/OTE setups; impulse leg stops at break candle (no future leakage).
+- BPRUtils: readable recent BPR selection + main-structure sweep scan.
+- BreakerUtils: multiple historical breaker blocks.
+- OrderBlock: leg-low/high indexes for visual/replay diagnostics.
+- StructureBreak / StructureBreakType: new explicit structure-break model.
+
+Visual validation:
+- real-market Fractal/FVG/Market Structure charts instead of tiny unreadable fixtures;
+- real BOS/CHoCH line from pivot to actual break candle;
+- context zig-zag through HH/HL/LH/LL;
+- limited/readable liquidity, BPR and FVG overlays;
+- multiple OTE and Breaker examples;
+- full 400-candle sweep/CHoCH validation;
+- new StructureIndicatorLogicTest;
+- updated Russian instructions and Windows runner.

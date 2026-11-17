@@ -5,15 +5,50 @@ import com.lavaksoft.bot.trade.model.Choch;
 import com.lavaksoft.bot.trade.model.ContextFlow;
 import com.lavaksoft.bot.trade.model.KeyFractal;
 import com.lavaksoft.bot.trade.model.MarketBias;
+import com.lavaksoft.bot.trade.model.StructureBreak;
 import com.lavaksoft.bot.trade.model.SwingPoints;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class BOSUtils {
+    private final MarketStructureUtils marketStructureUtils = new MarketStructureUtils();
+
+    /**
+     * Compatibility method used by Modern3LevelStrategy. A structure break is confirmed by CLOSE,
+     * not by a wick/body heuristic. The broken structural pivot is marked once.
+     */
     public boolean hasBOS(ContextFlow contextFlow, Candle currentCandle) {
+        if (contextFlow == null || contextFlow.getKeyFractals() == null || contextFlow.getKeyFractals().isEmpty()) return false;
         KeyFractal keyFractal = contextFlow.getKeyFractals().get(contextFlow.getKeyFractals().size() - 1);
-        return checkBos(contextFlow, currentCandle, keyFractal);
+        switch (keyFractal.getType()) {
+            case HL:
+                if (currentCandle.getClose() < keyFractal.getFractal().getCandle().getLow()) {
+                    keyFractal.setHasBos(true);
+                    contextFlow.setHasBOS(true);
+                    return true;
+                }
+                break;
+            case LH:
+                if (currentCandle.getClose() > keyFractal.getFractal().getCandle().getHigh()) {
+                    keyFractal.setHasBos(true);
+                    contextFlow.setHasBOS(true);
+                    return true;
+                }
+                break;
+            default:
+                break;
+        }
+        return false;
+    }
+
+    /** Actual historical BOS/CHoCH events with reference and break candle indexes. */
+    public List<StructureBreak> findStructureBreaks(List<Candle> candles) {
+        return marketStructureUtils.findStructureBreaks(candles, 2, 2);
+    }
+
+    public List<StructureBreak> findStructureBreaks(List<Candle> candles, int left, int right) {
+        return marketStructureUtils.findStructureBreaks(candles, left, right);
     }
 
     /**
@@ -40,29 +75,5 @@ public class BOSUtils {
             }
         }
         return null;
-    }
-
-    private static boolean checkBos(ContextFlow contextFlow, Candle currentCandle, KeyFractal keyFractal) {
-        switch (keyFractal.getType()) {
-            case HL:
-                double layerLow = keyFractal.getFractal().getCandle().getLow();
-                if (currentCandle.getLow() < layerLow && (layerLow - currentCandle.getClose()) + (layerLow - currentCandle.getOpen()) > 0) {
-                    keyFractal.setHasBos(true);
-                    contextFlow.setHasBOS(true);
-                    return true;
-                }
-                break;
-            case LH:
-                double layerHigh = keyFractal.getFractal().getCandle().getHigh();
-                if (currentCandle.getHigh() > layerHigh && (currentCandle.getClose() - layerHigh) + (currentCandle.getOpen() - layerHigh) > 0) {
-                    keyFractal.setHasBos(true);
-                    contextFlow.setHasBOS(true);
-                    return true;
-                }
-                break;
-            default:
-                break;
-        }
-        return false;
     }
 }

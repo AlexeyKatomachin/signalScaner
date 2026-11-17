@@ -77,61 +77,84 @@ public class LiquidityUtils {
         }
     }
 
+    /**
+     * Equal highs/lows are price-equality concepts. The old implementation made the allowed
+     * price difference grow with candle distance, which produced visibly unrelated EQH/EQL.
+     * We now use an ATR-relative tolerance (10% of ATR) and compare pivots chronologically.
+     */
     private static void findEQL(List<Candle> candles, TreeMap<Double, Liquidity> highLiquidity, TreeMap<Double, Liquidity> lowLiquidity) {
-        ArrayList<Double> lowLiquidityKeySet = new ArrayList<>(lowLiquidity.keySet());
-        for (int i = 0; i < lowLiquidityKeySet.size() - 1; i++) {
-            Liquidity liquidityNext = lowLiquidity.get(lowLiquidityKeySet.get(i + 1));
-            Liquidity liquidityCurrent = lowLiquidity.get(lowLiquidityKeySet.get(i));
-            Candle candleNext = liquidityNext.getFractal().getCandle();
-            Candle candleCurrent = liquidityCurrent.getFractal().getCandle();
-            double percentOfChange = (100d * (candleNext.getLow() - candleCurrent.getLow())) / candleNext.getLow();
-            int indexOfCurrentCandle = candles.indexOf(candleCurrent);
-            int indexOfNextCandle = candles.indexOf(candleNext);
-            int distanceInCandles = indexOfNextCandle - indexOfCurrentCandle;
-            if (distanceInCandles < 0) {
-                distanceInCandles = -distanceInCandles;
-            }
-            if (percentOfChange < 0) {
-                percentOfChange = -percentOfChange;
-            }
-            if (isEQL(distanceInCandles, percentOfChange)) {
-                liquidityCurrent.setType(LiquidityType.EQL);
-                liquidityNext.setType(LiquidityType.EQL);
-            }
-        }
+        markEqualLevels(candles, new ArrayList<>(lowLiquidity.values()), false);
     }
 
     private static void findEQH(List<Candle> candles, TreeMap<Double, Liquidity> highLiquidity) {
-        ArrayList<Double> highLiquidityKeySet = new ArrayList<>(highLiquidity.keySet());
-        for (int i = 0; i < highLiquidityKeySet.size() - 1; i++) {
-            Liquidity liquidityNext = highLiquidity.get(highLiquidityKeySet.get(i + 1));
-            Liquidity liquidityCurrent = highLiquidity.get(highLiquidityKeySet.get(i));
-            Candle candleNext = liquidityNext.getFractal().getCandle();
-            Candle candleCurrent = liquidityCurrent.getFractal().getCandle();
-            double percentOfChange = (100d * (candleNext.getHigh() - candleCurrent.getHigh())) / candleNext.getHigh();
-            int indexOfCurrentCandle = candles.indexOf(candleCurrent);
-            int indexOfNextCandle = candles.indexOf(candleNext);
-            int distanceInCandles = indexOfNextCandle - indexOfCurrentCandle;
-            if (distanceInCandles < 0) {
-                distanceInCandles = -distanceInCandles;
+        markEqualLevels(candles, new ArrayList<>(highLiquidity.values()), true);
+    }
+
+    public boolean areEqualHighs(List<Candle> candles, int firstIndex, int secondIndex) {
+        return areEqualLevels(candles, firstIndex, secondIndex, true);
+    }
+
+    public boolean areEqualLows(List<Candle> candles, int firstIndex, int secondIndex) {
+        return areEqualLevels(candles, firstIndex, secondIndex, false);
+    }
+
+    private static boolean areEqualLevels(List<Candle> candles, int firstIndex, int secondIndex, boolean highs) {
+        if (firstIndex < 0 || secondIndex < 0 || firstIndex >= candles.size() || secondIndex >= candles.size() || firstIndex == secondIndex) return false;
+        int later = Math.max(firstIndex, secondIndex);
+        double first = highs ? candles.get(firstIndex).getHigh() : candles.get(firstIndex).getLow();
+        double second = highs ? candles.get(secondIndex).getHigh() : candles.get(secondIndex).getLow();
+        double tolerance = Math.max(atr(candles, later, 200) * 0.10, Math.abs(second) * 0.00005);
+        return Math.abs(first - second) <= tolerance;
+    }
+
+    private static void markEqualLevels(List<Candle> candles, List<Liquidity> candidates, boolean highs) {
+        candidates.sort((a, b) -> Integer.compare(
+                candles.indexOf(a.getFractal().getCandle()),
+                candles.indexOf(b.getFractal().getCandle())));
+
+        Liquidity previous = null;
+        for (Liquidity current : candidates) {
+            if (previous == null) {
+                previous = current;
+                continue;
             }
-            if (percentOfChange < 0) {
-                percentOfChange = -percentOfChange;
+            int previousIndex = candles.indexOf(previous.getFractal().getCandle());
+            int currentIndex = candles.indexOf(current.getFractal().getCandle());
+            if (previousIndex < 0 || currentIndex < 0 || currentIndex <= previousIndex) {
+                previous = current;
+                continue;
             }
-            if (isEQH(distanceInCandles, percentOfChange)) {
-                liquidityCurrent.setType(LiquidityType.EQH);
-                liquidityNext.setType(LiquidityType.EQH);
+
+            double previousPrice = highs
+                    ? previous.getFractal().getCandle().getHigh()
+                    : previous.getFractal().getCandle().getLow();
+            double currentPrice = highs
+                    ? current.getFractal().getCandle().getHigh()
+                    : current.getFractal().getCandle().getLow();
+            if (areEqualLevels(candles, previousIndex, currentIndex, highs)) {
+                previous.setType(highs ? LiquidityType.EQH : LiquidityType.EQL);
+                current.setType(highs ? LiquidityType.EQH : LiquidityType.EQL);
             }
+            previous = current;
         }
     }
 
-    private static boolean isEQH(int distanceInCandles, Double percentOfChange) {
-        double stepOfChange = 0.37;
-        return (distanceInCandles * stepOfChange) > percentOfChange;
-    }
-
-    private static boolean isEQL(int distanceInCandles, Double percentOfChange) {
-        return isEQH(distanceInCandles, percentOfChange);
+    private static double atr(List<Candle> candles, int endIndex, int period) {
+        int from = Math.max(0, endIndex - period + 1);
+        double sum = 0.0;
+        int count = 0;
+        for (int i = from; i <= endIndex; i++) {
+            Candle candle = candles.get(i);
+            double tr = candle.getHigh() - candle.getLow();
+            if (i > 0) {
+                double previousClose = candles.get(i - 1).getClose();
+                tr = Math.max(tr, Math.abs(candle.getHigh() - previousClose));
+                tr = Math.max(tr, Math.abs(candle.getLow() - previousClose));
+            }
+            sum += tr;
+            count++;
+        }
+        return count == 0 ? 0.0 : sum / count;
     }
 
     private static void initLiquidity(List<Candle> candles, TreeMap<Double, Liquidity> highLiquidity, TreeMap<Double, Liquidity> lowLiquidity) {

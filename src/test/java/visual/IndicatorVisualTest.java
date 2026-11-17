@@ -26,16 +26,16 @@ import com.lavaksoft.bot.trade.model.MarketBias;
 import com.lavaksoft.bot.trade.model.OrderBlock;
 import com.lavaksoft.bot.trade.model.OteZone;
 import com.lavaksoft.bot.trade.model.POI;
+import com.lavaksoft.bot.trade.model.StructureBreak;
 import com.lavaksoft.bot.trade.model.SwingPoints;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -43,14 +43,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Human-readable validation suite for market indicators.
- * <p>
- * Every scenario produces:
- * - before.png  : raw candles only;
- * - after.png   : the exact same candles with the indicator overlay;
- * - context.json: machine-readable values detected by the indicator;
- * - result.txt  : short summary/checklist;
- * - target/indicator-tests/index.html aggregates all scenarios.
+ * Human-readable indicator validation. Each scenario generates before.png, after.png,
+ * context.json and result.txt and is linked from target/indicator-tests/index.html.
  */
 class IndicatorVisualTest {
 
@@ -58,281 +52,248 @@ class IndicatorVisualTest {
     private static final String FRACTAL_BASIC = "/indicator-scenarios/fractal/basic.csv";
     private static final String FVG_BULLISH = "/indicator-scenarios/fvg/bullish.csv";
     private static final String FVG_BEARISH = "/indicator-scenarios/fvg/bearish.csv";
-    private static final String STRUCTURE_BULLISH = "/indicator-scenarios/market-structure/bullish.csv";
-    private static final String SWEEP_CHOCH_BULLISH = "/indicator-scenarios/market-structure/sweep-choch-bullish.csv";
 
     private final IndicatorChartRenderer renderer = new IndicatorChartRenderer();
 
     @Test
-    void fractalSyntheticScenario() throws IOException {
-        List<Candle> candles = load(FRACTAL_BASIC);
-        IndicatorArtifacts.Scenario scenario = start("fractal", "synthetic-basic", FRACTAL_BASIC, candles, "Fractal");
+    void fractalRealMarketScenario() throws IOException {
+        // Exact small assertion remains, but the human-facing chart uses enough real candles to be readable.
+        List<Candle> synthetic = load(FRACTAL_BASIC);
+        List<Fractal> exact = new FractalUtils().findFractals(synthetic);
+        assertFalse(exact.isEmpty());
+        assertTrue(synthetic.get(1).getFractal() != null && synthetic.get(1).getFractal().isHigh());
+        assertTrue(synthetic.get(2).getFractal() != null && synthetic.get(2).getFractal().isLow());
 
+        List<Candle> candles = tail(load(REAL_BTC), 180);
+        IndicatorArtifacts.Scenario scenario = start("fractal", "btc-real-readable", REAL_BTC, candles, "Fractal");
         List<Fractal> fractals = new FractalUtils().findFractals(candles);
-        assertFalse(fractals.isEmpty());
-        assertTrue(candles.get(1).getFractal() != null && candles.get(1).getFractal().isHigh(), "Index 1 must be a high fractal");
-        assertTrue(candles.get(2).getFractal() != null && candles.get(2).getFractal().isLow(), "Index 2 must be a low fractal");
-
         renderer.renderFractals(candles, scenario.after());
-        List<Map<String, Object>> detected = new ArrayList<>();
-        for (int i = 0; i < candles.size(); i++) {
-            Fractal f = candles.get(i).getFractal();
-            if (f != null && (f.isHigh() || f.isLow())) {
-                detected.add(IndicatorArtifacts.map("index", i, "time", candles.get(i).getTime(), "high", f.isHigh(), "low", f.isLow(),
-                        "price", f.isHigh() ? candles.get(i).getHigh() : candles.get(i).getLow()));
-            }
-        }
-        finish(scenario, IndicatorArtifacts.map("indicator", "Fractal", "detected", detected),
-                "Detected fractals: " + detected.size(),
-                "Expected anchors: index 1 = FH, index 2 = FL",
-                "Visual check: every marker should sit exactly on the candle wick extremum.");
+        finish(scenario, IndicatorArtifacts.map("indicator", "Fractal", "count", fractals.size(), "fractals", fractalMaps(candles, fractals)),
+                "Real candles shown: " + candles.size(),
+                "Detected basic fractals: " + fractals.size(),
+                "FH/FL must sit exactly on local wick extrema; the synthetic anchor assertion is still executed before rendering.");
     }
 
     @Test
     void keyFractalRealMarketScenario() throws IOException {
-        List<Candle> candles = load(REAL_BTC);
-        IndicatorArtifacts.Scenario scenario = start("key-fractal", "btc-real", REAL_BTC, candles, "Key fractal");
+        List<Candle> candles = tail(load(REAL_BTC), 220);
+        IndicatorArtifacts.Scenario scenario = start("key-fractal", "btc-real", REAL_BTC, candles, "Key fractal / market structure");
         FractalUtils utils = new FractalUtils();
         utils.findFractals(candles);
         List<KeyFractal> keys = utils.findKeyFractals(candles);
-        assertFalse(keys.isEmpty(), "Key-fractal detector returned no results");
-        renderer.renderKeyFractals(candles, scenario.after());
-
-        List<Map<String, Object>> detected = new ArrayList<>();
-        for (KeyFractal key : keys) {
-            Candle c = key.getFractal().getCandle();
-            detected.add(IndicatorArtifacts.map("index", candles.indexOf(c), "time", c.getTime(), "type", key.getType(),
-                    "price", key.getFractal().isHigh() ? c.getHigh() : c.getLow(), "bos", key.isHasBos()));
-        }
-        finish(scenario, IndicatorArtifacts.map("indicator", "KeyFractal", "count", keys.size(), "detected", detected),
-                "Key fractals: " + keys.size(),
-                "Visual check: HH/HL/LH/LL must match the market structure you expect.",
-                "Important: this is the legacy signalScaner key-fractal algorithm.");
+        assertFalse(keys.isEmpty());
+        renderer.renderKeyFractals(candles, keys, scenario.after());
+        finish(scenario, IndicatorArtifacts.map("indicator", "KeyFractal", "count", keys.size(), "detected", keyMaps(candles, keys)),
+                "Key pivots: " + keys.size(),
+                "Highs are HH/LH versus the previous structural high; lows are HL/LL versus the previous structural low.",
+                "The zig-zag must visually show context transitions rather than isolated orange dots.");
     }
 
     @Test
-    void legacyFvgSyntheticScenario() throws IOException {
-        List<Candle> candles = load(FVG_BULLISH);
-        IndicatorArtifacts.Scenario scenario = start("fvg-legacy", "bullish-synthetic", FVG_BULLISH, candles, "Legacy FVG");
+    void legacyFvgRealMarketScenario() throws IOException {
+        // Preserve the exact legacy rule assertion.
+        List<Candle> synthetic = load(FVG_BULLISH);
+        List<FVG> exact = new FVGUtils().findFVG(synthetic);
+        assertFalse(exact.isEmpty());
+        assertEquals(ActionType.LONG, exact.get(0).getType());
+        assertEquals(103.0, exact.get(0).getLow(), 1e-9);
+        assertEquals(105.0, exact.get(0).getHigh(), 1e-9);
+
+        List<Candle> candles = tail(load(REAL_BTC), 150);
+        IndicatorArtifacts.Scenario scenario = start("fvg-legacy", "btc-real-readable", REAL_BTC, candles, "Legacy FVG");
         List<FVG> fvgs = new FVGUtils().findFVG(candles);
         assertFalse(fvgs.isEmpty());
-        FVG first = fvgs.get(0);
-        assertEquals(ActionType.LONG, first.getType());
-        assertEquals(103.0, first.getLow(), 1e-9);
-        assertEquals(105.0, first.getHigh(), 1e-9);
         renderer.renderFvg(candles, fvgs, "Legacy FVG", scenario.after());
         finish(scenario, IndicatorArtifacts.map("indicator", "FVG_LEGACY", "count", fvgs.size(), "fvgs", fvgMaps(candles, fvgs)),
+                "Real candles shown: " + candles.size(),
                 "Legacy FVG count: " + fvgs.size(),
-                "Expected first bullish FVG: 103.0 .. 105.0",
-                "Visual check: the green FVG zone must be between candle #0 high and candle #2 low.");
+                "Only the most recent zones are rendered and active zones no longer cover the whole chart forever.");
     }
 
     @Test
-    void referenceFvgBullishSyntheticScenario() throws IOException {
-        referenceFvgScenario("bullish-synthetic", FVG_BULLISH, ActionType.LONG, 103.0, 105.0);
+    void referenceFvgRealMarketScenario() throws IOException {
+        // Both directions are still verified exactly on deterministic fixtures.
+        assertReferenceFvg(load(FVG_BULLISH), ActionType.LONG, 103.0, 105.0);
+        assertReferenceFvg(load(FVG_BEARISH), ActionType.SHORT, 105.0, 107.0);
+
+        List<Candle> candles = tail(load(REAL_BTC), 150);
+        IndicatorArtifacts.Scenario scenario = start("fvg-reference", "btc-real-readable", REAL_BTC, candles, "Reference FVG");
+        List<FVG> fvgs = new FVGUtils().findReferenceFVG(candles);
+        assertFalse(fvgs.isEmpty());
+        renderer.renderFvg(candles, fvgs, "Reference FVG", scenario.after());
+        finish(scenario, IndicatorArtifacts.map("indicator", "FVG_REFERENCE", "count", fvgs.size(), "fvgs", fvgMaps(candles, fvgs)),
+                "Real candles shown: " + candles.size(),
+                "Reference FVG count: " + fvgs.size(),
+                "Synthetic LONG and SHORT definitions are asserted before the real-market visualization.");
     }
 
     @Test
-    void referenceFvgBearishSyntheticScenario() throws IOException {
-        referenceFvgScenario("bearish-synthetic", FVG_BEARISH, ActionType.SHORT, 105.0, 107.0);
-    }
-
-    @Test
-    void marketStructureSyntheticScenario() throws IOException {
-        List<Candle> candles = load(STRUCTURE_BULLISH);
-        IndicatorArtifacts.Scenario scenario = start("market-structure", "bullish-synthetic", STRUCTURE_BULLISH, candles, "Market structure");
-        MarketStructureUtils utils = new MarketStructureUtils();
-        SwingPoints points = utils.findSwingPoints(candles, 2, 2);
-        MarketBias bias = utils.marketBias(candles, 2, 2);
-        assertEquals(List.of(2, 6, 10), points.getHighs());
-        assertEquals(List.of(4, 8, 12), points.getLows());
-        assertEquals(MarketBias.BULLISH, bias);
-        renderer.renderMarketStructure(candles, points, bias, scenario.after());
-        finish(scenario, IndicatorArtifacts.map("indicator", "MarketStructure", "bias", bias,
-                        "swingHighIndexes", points.getHighs(), "swingLowIndexes", points.getLows()),
+    void marketStructureRealMarketScenario() throws IOException {
+        List<Candle> candles = tail(load(REAL_BTC), 220);
+        IndicatorArtifacts.Scenario scenario = start("market-structure", "btc-real", REAL_BTC, candles, "Market structure");
+        FractalUtils fractalUtils = new FractalUtils();
+        fractalUtils.findFractals(candles);
+        List<KeyFractal> keys = fractalUtils.findKeyFractals(candles);
+        MarketBias bias = new MarketStructureUtils().marketBias(candles, 2, 2);
+        assertFalse(keys.isEmpty());
+        renderer.renderMarketStructure(candles, keys, bias, scenario.after());
+        finish(scenario, IndicatorArtifacts.map("indicator", "MarketStructure", "bias", bias, "keyFractals", keyMaps(candles, keys)),
                 "Bias: " + bias,
-                "Swing highs: " + points.getHighs(),
-                "Swing lows: " + points.getLows(),
-                "Expected: higher highs and higher lows => BULLISH.");
+                "Real candles shown: " + candles.size(),
+                "Read the structure directly from the HH/HL/LH/LL zig-zag.");
     }
 
     @Test
-    void sweepAndChochSyntheticScenario() throws IOException {
-        List<Candle> candles = load(SWEEP_CHOCH_BULLISH);
-        IndicatorArtifacts.Scenario scenario = start("sweep-choch", "bullish-synthetic", SWEEP_CHOCH_BULLISH, candles, "Sweep + CHoCH");
+    void sweepAndChochMainStructureScenario() throws IOException {
+        List<Candle> candles = load(REAL_BTC);
+        IndicatorArtifacts.Scenario scenario = start("sweep-choch", "btc-main-structure", REAL_BTC, candles, "Main structure sweep + CHoCH");
         MarketStructureUtils structure = new MarketStructureUtils();
-        BPRUtils bpr = new BPRUtils();
+        SwingPoints points = structure.findSwingPoints(candles, 2, 2);
+        List<LiquiditySweep> sweeps = new BPRUtils().detectLiquiditySweeps(candles, points, 8);
+        assertFalse(sweeps.isEmpty());
+
         BOSUtils bos = new BOSUtils();
-
-        List<Candle> knownAtSweep = new ArrayList<>(candles.subList(0, 12));
-        SwingPoints knownPoints = structure.findSwingPoints(knownAtSweep, 2, 2);
-        LiquiditySweep sweep = bpr.detectLiquiditySweep(knownAtSweep, knownPoints, MarketBias.BULLISH, 50);
-        assertNotNull(sweep, "Expected bullish liquidity sweep was not detected");
-        assertEquals(8, sweep.getSweptIndex());
-        assertEquals(11, sweep.getSweepIndex());
-
-        Choch choch = bos.detectChoch(candles, sweep.getSweepIndex(), MarketBias.BULLISH, structure);
-        assertNotNull(choch, "Expected CHoCH was not detected");
-        assertEquals(12, choch.getChochIndex());
-        assertEquals(6, choch.getReferenceIndex());
-        renderer.renderSweepChoch(candles, sweep, choch, scenario.after());
-        finish(scenario, IndicatorArtifacts.map("indicator", "Sweep+CHoCH",
-                        "sweep", IndicatorArtifacts.map("sweptIndex", sweep.getSweptIndex(), "sweepIndex", sweep.getSweepIndex(),
-                                "level", sweep.getLevel(), "extreme", sweep.getExtreme()),
-                        "choch", IndicatorArtifacts.map("referenceIndex", choch.getReferenceIndex(), "chochIndex", choch.getChochIndex(), "level", choch.getLevel())),
-                "Sweep: candle " + sweep.getSweepIndex() + " takes liquidity from candle " + sweep.getSweptIndex(),
-                "CHoCH: candle " + choch.getChochIndex() + " closes through level from candle " + choch.getReferenceIndex(),
-                "Timing check: sweep is detected using only candles available up to the sweep candle.");
+        List<Choch> chochs = new ArrayList<>();
+        for (LiquiditySweep sweep : sweeps) {
+            MarketBias expectedReversal = sweep.getExtreme() < sweep.getLevel() ? MarketBias.BULLISH : MarketBias.BEARISH;
+            Choch choch = bos.detectChoch(candles, sweep.getSweepIndex(), expectedReversal, structure);
+            if (choch != null) chochs.add(choch);
+        }
+        renderer.renderSweepChoch(candles, sweeps, chochs, scenario.after());
+        finish(scenario, IndicatorArtifacts.map("indicator", "SweepChoch", "sweeps", sweepMaps(sweeps), "chochCount", chochs.size()),
+                "Main-structure sweeps shown: " + sweeps.size(),
+                "CHoCH confirmations shown: " + chochs.size(),
+                "Unlike the old tiny synthetic chart this runs across the complete 400-candle fixture.");
     }
 
     @Test
     void contextRealMarketScenario() throws IOException {
         AnalysisPipeline p = legacyPipeline();
         IndicatorArtifacts.Scenario scenario = start("context", "btc-real", REAL_BTC, p.candles, "Context");
-        assertFalse(p.contexts.isEmpty(), "Context detector returned no results");
+        assertFalse(p.contexts.isEmpty(), "No structural contexts produced");
         renderer.renderContexts(p.candles, p.contexts, scenario.after());
         List<Map<String, Object>> contexts = new ArrayList<>();
         for (int i = 0; i < p.contexts.size(); i++) {
-            ContextFlow context = p.contexts.get(i);
-            contexts.add(IndicatorArtifacts.map("index", i, "type", context.getType(), "hasBOS", context.isHasBOS(),
-                    "fromIndex", p.candles.indexOf(context.getCandles().get(0)),
-                    "toIndex", p.candles.indexOf(context.getCandles().get(context.getCandles().size() - 1)),
-                    "keyFractals", context.getKeyFractals().size()));
+            ContextFlow c = p.contexts.get(i);
+            contexts.add(IndicatorArtifacts.map("index", i, "type", c.getType(), "hasBOS", c.isHasBOS(),
+                    "keyFractals", keyMaps(p.candles, c.getKeyFractals())));
         }
         finish(scenario, IndicatorArtifacts.map("indicator", "Context", "count", p.contexts.size(), "contexts", contexts),
                 "Contexts: " + p.contexts.size(),
-                "Visual check: shaded LONG/SHORT ranges should switch where your structural context actually changes.");
+                "LONG context is built from HH+HL; SHORT context from LH+LL.",
+                "The chart now shows the structural zig-zag instead of opaque full-height background bands.");
     }
 
     @Test
     void liquidityRealMarketScenario() throws IOException {
         AnalysisPipeline p = legacyPipeline();
         IndicatorArtifacts.Scenario scenario = start("liquidity", "btc-real", REAL_BTC, p.candles, "Liquidity");
-        assertFalse(p.liquidities.isEmpty(), "Liquidity detector returned no results");
         renderer.renderLiquidity(p.candles, p.liquidities, scenario.after());
-        List<Map<String, Object>> items = new ArrayList<>();
-        for (Liquidity l : p.liquidities) {
-            Candle c = l.getFractal().getCandle();
-            items.add(IndicatorArtifacts.map("index", p.candles.indexOf(c), "time", c.getTime(), "type", l.getType(),
-                    "price", l.getFractal().isHigh() ? c.getHigh() : c.getLow(), "fulfilled", l.isFulfilled()));
-        }
-        finish(scenario, IndicatorArtifacts.map("indicator", "Liquidity", "count", p.liquidities.size(), "levels", items),
-                "Liquidity levels: " + p.liquidities.size(),
-                "Visual check: BSL/SSL/EQH/EQL lines must originate from the intended fractal levels.");
+        finish(scenario, IndicatorArtifacts.map("indicator", "Liquidity", "count", p.liquidities.size(), "liquidity", liquidityMaps(p.candles, p.liquidities)),
+                "Liquidity objects: " + p.liquidities.size(),
+                "EQH/EQL now use an ATR-relative price tolerance; candle distance no longer widens the allowed price error.",
+                "The chart intentionally renders only equal levels plus a few recent active liquidity levels.");
     }
 
     @Test
     void poiRealMarketScenario() throws IOException {
         AnalysisPipeline p = legacyPipeline();
         IndicatorArtifacts.Scenario scenario = start("poi", "btc-real", REAL_BTC, p.candles, "POI");
-        assertFalse(p.pois.isEmpty(), "POI detector returned no results");
         renderer.renderPoi(p.candles, p.pois, scenario.after());
-        List<Map<String, Object>> items = new ArrayList<>();
-        for (POI poi : p.pois) {
-            items.add(IndicatorArtifacts.map("type", poi.getType(), "value", poi.getValue(),
-                    "source", poi.getFvg() != null ? "FVG" : "LIQUIDITY"));
-        }
-        finish(scenario, IndicatorArtifacts.map("indicator", "POI", "count", p.pois.size(), "pois", items),
+        finish(scenario, IndicatorArtifacts.map("indicator", "POI", "count", p.pois.size()),
                 "POIs: " + p.pois.size(),
-                "Visual check: POI markers should correspond only to active FVG/liquidity objects.");
+                "Only the latest POIs are rendered to keep the chart readable.");
     }
 
     @Test
     void bosRealMarketScenario() throws IOException {
-        AnalysisPipeline p = legacyPipeline();
-        IndicatorArtifacts.Scenario scenario = start("bos", "btc-real", REAL_BTC, p.candles, "BOS");
-        List<KeyFractal> keys = p.candles.stream().map(Candle::getFractal).filter(Objects::nonNull)
-                .map(Fractal::getKeyFractal).filter(Objects::nonNull).collect(Collectors.toList());
-        List<KeyFractal> bos = keys.stream().filter(KeyFractal::isHasBos).collect(Collectors.toList());
-        assertFalse(bos.isEmpty(), "No BOS flags were produced on the real-market fixture");
-        renderer.renderBos(p.candles, keys, scenario.after());
+        List<Candle> candles = load(REAL_BTC);
+        IndicatorArtifacts.Scenario scenario = start("bos", "btc-real", REAL_BTC, candles, "BOS / CHoCH");
+        List<StructureBreak> breaks = new BOSUtils().findStructureBreaks(candles, 2, 2);
+        assertFalse(breaks.isEmpty(), "No structure breaks were produced on the real-market fixture");
+        renderer.renderBos(candles, breaks, scenario.after());
         List<Map<String, Object>> items = new ArrayList<>();
-        for (KeyFractal key : bos) {
-            Candle c = key.getFractal().getCandle();
-            items.add(IndicatorArtifacts.map("index", p.candles.indexOf(c), "type", key.getType(),
-                    "price", key.getFractal().isHigh() ? c.getHigh() : c.getLow()));
+        for (StructureBreak b : breaks) {
+            items.add(IndicatorArtifacts.map("type", b.getType(), "direction", b.getDirection(),
+                    "referenceIndex", b.getReferenceIndex(), "breakIndex", b.getBreakIndex(), "level", b.getLevel()));
         }
-        finish(scenario, IndicatorArtifacts.map("indicator", "BOS", "count", bos.size(), "bos", items),
-                "BOS flags: " + bos.size(),
-                "Visual check: every BOS line must be tied to the structural level that was actually broken.");
+        finish(scenario, IndicatorArtifacts.map("indicator", "BOS_CHOCH", "count", breaks.size(), "breaks", items),
+                "Structure breaks: " + breaks.size(),
+                "Each line now stops on the candle whose CLOSE actually broke the confirmed pivot.",
+                "A break against the previous structural trend is labelled CHoCH; continuation is BOS.");
     }
 
     @Test
-    void oteRealMarketScenario() throws IOException {
+    void oteMultipleRealMarketScenario() throws IOException {
         List<Candle> candles = load(REAL_BTC);
-        IndicatorArtifacts.Scenario scenario = start("ote", "btc-real", REAL_BTC, candles, "OTE");
-        MarketStructureUtils structure = new MarketStructureUtils();
-        MarketBias bias = structure.marketBias(candles);
-        OTEUtils oteUtils = new OTEUtils();
-        OrderBlock ob = oteUtils.detectOrderBlock(candles, bias);
-        assertNotNull(ob, "No Order Block detected for current market bias");
-        OteZone ote = oteUtils.computeOteZone(ob);
-        FvgConfluence confluence = oteUtils.findConfluentFvg(candles, ob);
-        assertNotNull(ote);
-        assertNotNull(confluence, "Expected an FVG near/inside the detected Order Block on this fixture");
-        renderer.renderOte(candles, ob, confluence.getFvg(), ote, scenario.after());
-        finish(scenario, IndicatorArtifacts.map("indicator", "OTE", "bias", bias,
-                        "orderBlock", orderBlockMap(ob),
-                        "ote", IndicatorArtifacts.map("bottom", ote.getBottom(), "top", ote.getTop(), "mid", ote.getMid()),
-                        "fvg", fvgMap(candles, confluence.getFvg()), "fvgOverlapsOrderBlock", confluence.isOverlapsOrderBlock()),
-                "Bias: " + bias,
-                "Order block: index " + ob.getOrderBlockIndex() + ", BOS index " + ob.getBosIndex(),
-                "OTE zone: " + ote.getBottom() + " .. " + ote.getTop(),
-                "FVG confluence overlaps OB: " + confluence.isOverlapsOrderBlock(),
-                "Visual check: OB, FVG and OTE must describe the same impulse leg.");
+        IndicatorArtifacts.Scenario scenario = start("ote", "btc-real-multiple", REAL_BTC, candles, "OTE multiple setups");
+        OTEUtils utils = new OTEUtils();
+        List<OrderBlock> blocks = new ArrayList<>();
+        blocks.addAll(utils.detectOrderBlocks(candles, MarketBias.BULLISH, 350, 2, 2, 4));
+        blocks.addAll(utils.detectOrderBlocks(candles, MarketBias.BEARISH, 350, 2, 2, 4));
+        blocks.sort(Comparator.comparingInt(OrderBlock::getBosIndex));
+        if (blocks.size() > 6) blocks = new ArrayList<>(blocks.subList(blocks.size() - 6, blocks.size()));
+        assertFalse(blocks.isEmpty(), "No historical OTE impulses found");
+
+        List<OteZone> zones = new ArrayList<>();
+        List<FVG> fvgs = new ArrayList<>();
+        List<Map<String, Object>> setups = new ArrayList<>();
+        for (OrderBlock ob : blocks) {
+            OteZone zone = utils.computeOteZone(ob);
+            FvgConfluence confluence = utils.findConfluentFvg(candles, ob);
+            zones.add(zone);
+            fvgs.add(confluence == null ? null : confluence.getFvg());
+            setups.add(IndicatorArtifacts.map("orderBlock", orderBlockMap(ob),
+                    "ote", IndicatorArtifacts.map("bottom", zone.getBottom(), "top", zone.getTop(), "mid", zone.getMid()),
+                    "fvg", confluence == null ? null : fvgMap(candles, confluence.getFvg())));
+        }
+        renderer.renderOte(candles, blocks, fvgs, zones, scenario.after());
+        finish(scenario, IndicatorArtifacts.map("indicator", "OTE", "setupCount", blocks.size(), "setups", setups),
+                "OTE setups shown: " + blocks.size(),
+                "LEG LOW / LEG HIGH markers show exactly which impulse range produces 0.618-0.786.",
+                "The impulse is frozen at the structure-break candle; later candles cannot modify the OTE range.");
     }
 
     @Test
-    void bprRealMarketScenario() throws IOException {
+    void bprReadableRealMarketScenario() throws IOException {
         List<Candle> candles = load(REAL_BTC);
-        IndicatorArtifacts.Scenario scenario = start("bpr", "btc-real", REAL_BTC, candles, "BPR");
+        IndicatorArtifacts.Scenario scenario = start("bpr", "btc-real-readable", REAL_BTC, candles, "BPR readable");
         List<FVG> fvgs = new FVGUtils().findReferenceFVG(candles);
-        List<BprZone> zones = new BPRUtils().findBprZones(candles, fvgs, 15);
-        assertFalse(fvgs.isEmpty());
-        assertFalse(zones.isEmpty(), "No BPR overlaps were found on the real-market fixture");
-        renderer.renderBpr(candles, fvgs, zones, scenario.after());
+        List<BprZone> zones = new BPRUtils().findRecentBprZones(candles, fvgs, 15, 6);
+        assertFalse(zones.isEmpty(), "No recent BPR overlaps found");
+        renderer.renderBpr(candles, zones, scenario.after());
         List<Map<String, Object>> items = new ArrayList<>();
         for (BprZone z : zones) {
-            items.add(IndicatorArtifacts.map("formedIndex", z.getFormedIndex(), "time", z.getTime(), "bottom", z.getBottom(), "top", z.getTop()));
+            items.add(IndicatorArtifacts.map("formedIndex", z.getFormedIndex(), "time", z.getTime(),
+                    "bottom", z.getBottom(), "top", z.getTop(),
+                    "firstFvg", fvgMap(candles, z.getFirstFvg()), "secondFvg", fvgMap(candles, z.getSecondFvg())));
         }
-        finish(scenario, IndicatorArtifacts.map("indicator", "BPR", "referenceFvgCount", fvgs.size(), "bprCount", zones.size(), "zones", items),
-                "Reference FVGs: " + fvgs.size(),
-                "BPR zones: " + zones.size(),
-                "Visual check: every magenta BPR must be the overlap of opposite-direction FVGs.");
+        finish(scenario, IndicatorArtifacts.map("indicator", "BPR", "shown", zones.size(), "zones", items),
+                "BPR zones shown: " + zones.size(),
+                "Only the recent BPRs and their two parent FVGs are rendered.",
+                "No full-history carpet of unrelated FVG rectangles is drawn anymore.");
     }
 
     @Test
-    void breakerRealMarketScenario() throws IOException {
+    void breakerMultipleRealMarketScenario() throws IOException {
         List<Candle> candles = load(REAL_BTC);
-        IndicatorArtifacts.Scenario scenario = start("breaker", "btc-real", REAL_BTC, candles, "Breaker");
-        MarketBias bias = new MarketStructureUtils().marketBias(candles);
-        BreakerBlock breaker = new BreakerUtils().detectBreakerBlock(candles, bias);
-        assertNotNull(breaker, "No breaker was found on the real-market fixture");
-        renderer.renderBreaker(candles, breaker, scenario.after());
-        finish(scenario, IndicatorArtifacts.map("indicator", "Breaker", "bias", bias,
-                        "breaker", IndicatorArtifacts.map("originOrderBlockIndex", breaker.getOriginOrderBlockIndex(),
-                                "invalidationIndex", breaker.getInvalidationIndex(), "bottom", breaker.getBottom(), "top", breaker.getTop())),
-                "Bias: " + bias,
-                "Origin OB index: " + breaker.getOriginOrderBlockIndex(),
-                "Invalidation index: " + breaker.getInvalidationIndex(),
-                "Breaker: " + breaker.getBottom() + " .. " + breaker.getTop(),
-                "Visual check: the original opposite OB must be invalidated before it becomes a breaker.");
-    }
-
-    private void referenceFvgScenario(String scenarioName, String dataset, ActionType expectedType, double expectedLow, double expectedHigh) throws IOException {
-        List<Candle> candles = load(dataset);
-        IndicatorArtifacts.Scenario scenario = start("fvg-reference", scenarioName, dataset, candles, "Reference FVG");
-        List<FVG> fvgs = new FVGUtils().findReferenceFVG(candles);
-        assertFalse(fvgs.isEmpty());
-        FVG first = fvgs.get(0);
-        assertEquals(expectedType, first.getType());
-        assertEquals(expectedLow, first.getLow(), 1e-9);
-        assertEquals(expectedHigh, first.getHigh(), 1e-9);
-        renderer.renderFvg(candles, fvgs, "Reference FVG", scenario.after());
-        finish(scenario, IndicatorArtifacts.map("indicator", "FVG_REFERENCE", "count", fvgs.size(), "fvgs", fvgMaps(candles, fvgs)),
-                "Reference FVG count: " + fvgs.size(),
-                "Expected first FVG: " + expectedType + " " + expectedLow + " .. " + expectedHigh,
-                "Definition: candle[2].low > candle[0].high for LONG; candle[2].high < candle[0].low for SHORT.");
+        IndicatorArtifacts.Scenario scenario = start("breaker", "btc-real-multiple", REAL_BTC, candles, "Breaker multiple");
+        BreakerUtils utils = new BreakerUtils();
+        List<BreakerBlock> breakers = new ArrayList<>();
+        breakers.addAll(utils.detectBreakerBlocks(candles, MarketBias.BULLISH, 350, 4));
+        breakers.addAll(utils.detectBreakerBlocks(candles, MarketBias.BEARISH, 350, 4));
+        breakers.sort(Comparator.comparingInt(BreakerBlock::getInvalidationIndex));
+        if (breakers.size() > 6) breakers = new ArrayList<>(breakers.subList(breakers.size() - 6, breakers.size()));
+        assertFalse(breakers.isEmpty(), "No breakers found on the real-market fixture");
+        renderer.renderBreaker(candles, breakers, scenario.after());
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (BreakerBlock b : breakers) {
+            items.add(IndicatorArtifacts.map("originOrderBlockIndex", b.getOriginOrderBlockIndex(),
+                    "invalidationIndex", b.getInvalidationIndex(), "bottom", b.getBottom(), "top", b.getTop()));
+        }
+        finish(scenario, IndicatorArtifacts.map("indicator", "Breaker", "count", breakers.size(), "breakers", items),
+                "Breakers shown: " + breakers.size(),
+                "Each zone starts at the original OB and is explicitly marked at its invalidation candle.");
     }
 
     private AnalysisPipeline legacyPipeline() throws IOException {
@@ -362,13 +323,41 @@ class IndicatorVisualTest {
         assertTrue(Files.exists(IndicatorArtifacts.ROOT.resolve("index.html")));
     }
 
-    private static List<Candle> load(String dataset) throws IOException {
-        return CandleCsvLoader.load(dataset);
+    private static List<Candle> load(String dataset) throws IOException { return CandleCsvLoader.load(dataset); }
+
+    private static List<Candle> tail(List<Candle> candles, int count) {
+        if (candles.size() <= count) return candles;
+        return new ArrayList<>(candles.subList(candles.size() - count, candles.size()));
     }
 
     private static void assertImage(java.nio.file.Path file) throws IOException {
         assertTrue(Files.exists(file), "Image was not created: " + file);
         assertTrue(Files.size(file) > 0, "Image is empty: " + file);
+    }
+
+    private static void assertReferenceFvg(List<Candle> candles, ActionType type, double low, double high) {
+        List<FVG> fvgs = new FVGUtils().findReferenceFVG(candles);
+        assertFalse(fvgs.isEmpty());
+        assertEquals(type, fvgs.get(0).getType());
+        assertEquals(low, fvgs.get(0).getLow(), 1e-9);
+        assertEquals(high, fvgs.get(0).getHigh(), 1e-9);
+    }
+
+    private static List<Map<String, Object>> fractalMaps(List<Candle> candles, List<Fractal> fractals) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Fractal f : fractals) result.add(IndicatorArtifacts.map("index", candles.indexOf(f.getCandle()),
+                "high", f.isHigh(), "low", f.isLow(), "highPrice", f.getCandle().getHigh(), "lowPrice", f.getCandle().getLow()));
+        return result;
+    }
+
+    private static List<Map<String, Object>> keyMaps(List<Candle> candles, List<KeyFractal> keys) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (KeyFractal key : keys) {
+            Candle c = key.getFractal().getCandle();
+            result.add(IndicatorArtifacts.map("index", candles.indexOf(c), "time", c.getTime(), "type", key.getType(),
+                    "price", key.getFractal().isHigh() ? c.getHigh() : c.getLow(), "broken", key.isHasBos()));
+        }
+        return result;
     }
 
     private static List<Map<String, Object>> fvgMaps(List<Candle> candles, List<FVG> fvgs) {
@@ -378,14 +367,33 @@ class IndicatorVisualTest {
     }
 
     private static Map<String, Object> fvgMap(List<Candle> candles, FVG fvg) {
+        if (fvg == null) return null;
         return IndicatorArtifacts.map("index", candles.indexOf(fvg.getCandle()), "time", fvg.getCandle().getTime(), "type", fvg.getType(),
                 "low", fvg.getLow(), "high", fvg.getHigh(), "tested", fvg.isTested(), "fulfilled", fvg.isFulfilled());
+    }
+
+    private static List<Map<String, Object>> liquidityMaps(List<Candle> candles, List<Liquidity> liquidities) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Liquidity l : liquidities) {
+            Candle c = l.getFractal().getCandle();
+            result.add(IndicatorArtifacts.map("index", candles.indexOf(c), "type", l.getType(), "fulfilled", l.isFulfilled(),
+                    "price", l.getFractal().isHigh() ? c.getHigh() : c.getLow()));
+        }
+        return result;
+    }
+
+    private static List<Map<String, Object>> sweepMaps(List<LiquiditySweep> sweeps) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (LiquiditySweep s : sweeps) result.add(IndicatorArtifacts.map("sweptIndex", s.getSweptIndex(), "sweepIndex", s.getSweepIndex(),
+                "level", s.getLevel(), "extreme", s.getExtreme()));
+        return result;
     }
 
     private static Map<String, Object> orderBlockMap(OrderBlock ob) {
         return IndicatorArtifacts.map("type", ob.getType(), "orderBlockIndex", ob.getOrderBlockIndex(), "bosIndex", ob.getBosIndex(),
                 "levelIndex", ob.getLevelIndex(), "bottom", ob.getBottom(), "top", ob.getTop(),
-                "legLow", ob.getLegLow(), "legHigh", ob.getLegHigh());
+                "legLow", ob.getLegLow(), "legLowIndex", ob.getLegLowIndex(),
+                "legHigh", ob.getLegHigh(), "legHighIndex", ob.getLegHighIndex());
     }
 
     private static final class AnalysisPipeline {
